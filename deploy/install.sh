@@ -200,6 +200,9 @@ done
 if [ -n "$started" ]; then
     echo
     say "Готово! Бот работает 24/7 и сам поднимется после перезагрузки сервера."
+    if grep -qE '^AI_API_KEY=.+' "$ENV_FILE"; then
+        /usr/local/bin/finbot ai-status || true
+    fi
     [ -z "$new_config" ] || echo "   Открой бота в Telegram и отправь /start."
     echo
     echo "   Управление: finbot status | logs | restart | update | token | ai | backup | import"

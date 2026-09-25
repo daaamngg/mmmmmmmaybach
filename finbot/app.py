@@ -18,6 +18,7 @@ from aiogram.types import BotCommandScopeAllPrivateChats, ErrorEvent
 
 from . import clock, handlers, texts, ui
 from .ai import AICategorizer
+from .ai import probe as probe_ai
 from .config import Config, ConfigError, load_config
 from .context import App
 from .db import Database
@@ -99,6 +100,7 @@ async def main() -> None:
             log.warning("Владелец ещё не задан: открой @%s в Telegram и нажми /start", me.username)
         if app.ai is not None:
             log.info("Нейросеть для категорий: %s", app.ai.title)
+            ui.spawn(probe_ai(app.ai))
         tasks.append(asyncio.create_task(scheduler.run()))
 
     async def on_shutdown() -> None:

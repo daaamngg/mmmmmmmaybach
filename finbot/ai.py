@@ -103,10 +103,34 @@ class AICategorizer:
         self._trust_env = trust_env
         self._session: aiohttp.ClientSession | None = None
         self._warned: set[str] = set()
+        # Для экрана настроек: сколько раз ответила и чем закончилась последняя попытка.
+        self.answered = 0
+        self.last_error: str | None = None
 
     @property
     def title(self) -> str:
         return f"{self.config.name} ({self.config.model})"
+
+    @property
+    def status(self) -> str:
+        if self.last_error:
+            return f"⚠️ {self.last_error}"
+        return "работает ✅" if self.answered else "подключена, ждёт незнакомых слов"
+
+    def payload(self, note: str, kind: str) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": build_prompt(note, kind)},
+            ],
+            "temperature": 0,
+            "max_tokens": 800,  # с запасом: «думающие» модели тратят токены на рассуждение
+        }
+        if "groq.com" in self.config.base_url and "gpt-oss" in self.config.model:
+            # Без этого gpt-oss на Groq может «задуматься» и вернуть пустой ответ.
+            body["reasoning_effort"] = "low"
+        return body
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -117,38 +141,52 @@ class AICategorizer:
         if self._session is not None and not self._session.closed:
             await self._session.close()
 
-    def _warn(self, kind: str, message: str, *args: Any) -> None:
-        """Одинаковые ошибки пишем в лог один раз, чтобы не засорять его."""
-        if kind not in self._warned:
-            self._warned.add(kind)
+    def _fail(self, key: str, status: str, message: str, *args: Any) -> None:
+        """Запоминает ошибку для настроек; в лог одинаковые ошибки пишем один раз."""
+        self.last_error = status
+        if key not in self._warned:
+            self._warned.add(key)
             log.warning(message, *args)
 
     async def categorize(self, note: str, kind: str) -> str | None:
-        payload = {
-            "model": self.config.model,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": build_prompt(note, kind)},
-            ],
-            "temperature": 0,
-            "max_tokens": 400,  # с запасом для «думающих» моделей
-        }
         headers = {"Authorization": f"Bearer {self.config.api_key}"}
         try:
             session = await self._get_session()
-            async with session.post(f"{self.config.base_url}/chat/completions", json=payload, headers=headers) as resp:
+            url = f"{self.config.base_url}/chat/completions"
+            async with session.post(url, json=self.payload(note, kind), headers=headers) as resp:
                 if resp.status != 200:
                     body = (await resp.text())[:300]
-                    hint = " (проверь AI_API_KEY)" if resp.status in (401, 403) else ""
-                    self._warn(f"http{resp.status}", "Нейросеть ответила %s%s: %s", resp.status, hint, body)
+                    if resp.status in (401, 403):
+                        status = "ключ не принят — проверь его (finbot ai)"
+                    elif resp.status == 429:
+                        status = "исчерпан бесплатный лимит, попробую позже"
+                    elif resp.status in (400, 404) and "model" in body.lower():
+                        status = "модель недоступна — укажи другую в AI_MODEL"
+                    else:
+                        status = f"сервис ответил ошибкой {resp.status}"
+                    self._fail(f"http{resp.status}", status, "Нейросеть ответила %s: %s", resp.status, body)
                     return None
                 data = await resp.json(content_type=None)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
-            self._warn(type(e).__name__, "Нейросеть недоступна: %r", e)
+            self._fail(type(e).__name__, "нет связи с сервисом", "Нейросеть недоступна: %r", e)
             return None
         try:
             content = data["choices"][0]["message"].get("content")
         except (KeyError, IndexError, TypeError, AttributeError):
-            self._warn("format", "Непонятный ответ нейросети: %.300s", data)
+            self._fail("format", "непонятный ответ сервиса", "Непонятный ответ нейросети: %.300s", data)
             return None
+        self.answered += 1
+        self.last_error = None
         return parse_category(content, kind)
+
+
+PROBE_NOTE = "капучино в кофейне"
+
+
+async def probe(ai: AICategorizer) -> None:
+    """Пробный запрос при запуске: сразу видно в логе, работает ли ключ."""
+    category = await ai.categorize(PROBE_NOTE, "expense")
+    if ai.last_error:
+        log.warning("Нейросеть не работает: %s", ai.last_error)
+    else:
+        log.info("Нейросеть отвечает ✅ (проверка: «%s» → %s)", PROBE_NOTE, category or "не поняла")

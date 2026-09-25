@@ -23,6 +23,7 @@ usage() {
   finbot update            скачать новую версию бота и перезапустить
   finbot token             сменить токен (после перевыпуска в @BotFather)
   finbot ai                подключить или отключить нейросеть для категорий
+  finbot ai-status         работает ли нейросеть
   finbot backup            сохранить копию базы и фото в /root
   finbot import ПУТЬ       перенести данные с ноутбука (папка data или файл finbot.db)
 EOF
@@ -55,6 +56,22 @@ restart_and_check() {  # restart_and_check [start|restart]
     warn "Бот не подтвердил запуск. Последние строки лога:"
     journalctl -u "$SERVICE" --since "$since" -n 15 --no-pager || true
     return 1
+}
+
+ai_check() {  # ждём результат пробного запроса к нейросети (его делает бот при запуске)
+    local line=""
+    for _ in $(seq 1 20); do
+        line="$(journalctl -u "$SERVICE" -n 40 -q --no-pager -o cat 2>/dev/null | grep -E "Нейросеть (отвечает|не работает)" | tail -n 1 || true)"
+        [ -n "$line" ] && break
+        sleep 1
+    done
+    if [ -z "$line" ]; then
+        warn "Нейросеть пока не ответила — проверь позже в боте: ⚙️ Настройки."
+    elif [[ "$line" == *"отвечает"* ]]; then
+        say "${line#*: }"
+    else
+        warn "${line#*: }"
+    fi
 }
 
 snapshot_db() {  # snapshot_db КУДА — целостная копия базы, даже если бот работает
@@ -115,9 +132,11 @@ EOF
         set_env AI_API_KEY "$key"
         if [ -n "$key" ]; then say "Ключ сохранён. Перезапускаю…"; else say "Нейросеть отключена. Перезапускаю…"; fi
         if restart_and_check && [ -n "$key" ]; then
-            sleep 1
-            journalctl -u "$SERVICE" -n 30 -q --no-pager | grep -E "Нейросеть" | tail -n 1 || true
+            ai_check
         fi
+        ;;
+    ai-status)
+        if grep -qE '^AI_API_KEY=.+' "$ENV_FILE"; then ai_check; else warn "Нейросеть не подключена: finbot ai"; fi
         ;;
     backup)
         stamp="$(date +%Y-%m-%d_%H%M)"

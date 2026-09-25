@@ -41,7 +41,7 @@ async def settings_view(db: Database, app: App) -> tuple[str, InlineKeyboardMark
     s = db.settings
     harsh = "☠️ Без цензуры" if s.harsh >= 2 else "🔥 Жёстко"
     learned = await db.learned_count()
-    ai = f"<b>{esc(app.ai.title)}</b>" if app.ai else "не подключена (см. README)"
+    ai = f"<b>{esc(app.ai.title)}</b> — {esc(app.ai.status)}" if app.ai else "не подключена (см. README)"
     lines = [
         "⚙️ <b>НАСТРОЙКИ</b>",
         "",

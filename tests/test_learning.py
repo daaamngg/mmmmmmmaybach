@@ -72,6 +72,17 @@ async def test_migration_from_v1_keeps_data(tmp_path: Path, frozen) -> None:
     assert version == 2
 
 
+def test_groq_gpt_oss_gets_low_reasoning_effort() -> None:
+    groq = AICategorizer(make_config("gsk_abc"))  # type: ignore[arg-type]
+    body = groq.payload("ершик", "expense")
+    assert body["model"] == "openai/gpt-oss-20b" and body["reasoning_effort"] == "low"
+    assert "ершик" in body["messages"][1]["content"]
+    other = AICategorizer(make_config("sk-or-v1-abc"))  # type: ignore[arg-type]
+    assert "reasoning_effort" not in other.payload("ершик", "expense")
+    custom = AICategorizer(make_config("gsk_abc", model="qwen/qwen3-32b"))  # type: ignore[arg-type]
+    assert "reasoning_effort" not in custom.payload("ершик", "expense")
+
+
 def test_ai_config_presets() -> None:
     assert make_config("") is None
     groq = make_config("gsk_abc")
@@ -126,8 +137,13 @@ async def test_ai_client_against_fake_api() -> None:
         body = await request.json()
         seen.append({"auth": request.headers.get("Authorization"), **body})
         note = body["messages"][1]["content"]
-        if "ключ-плохой" in request.headers.get("Authorization", ""):
+        auth = request.headers.get("Authorization", "")
+        if "ключ-плохой" in auth:
             return web.json_response({"error": "invalid key"}, status=401)
+        if "лимит" in note:
+            return web.json_response({"error": "rate limit"}, status=429)
+        if "старая-модель" in body["model"]:
+            return web.json_response({"error": {"code": "model_decommissioned"}}, status=400)
         if "медленно" in note:
             await asyncio.sleep(2)
         if "мусор" in note:
@@ -139,18 +155,51 @@ async def test_ai_client_against_fake_api() -> None:
         cfg = make_config("ключ-хороший", url, "test-model")
         assert cfg is not None
         ai = AICategorizer(cfg, timeout=1, trust_env=False)
+        assert "ждёт" in ai.status
         assert await ai.categorize("ершик для унитаза", "expense") == "home"
+        assert ai.status == "работает ✅"
         assert seen[0]["auth"] == "Bearer ключ-хороший" and seen[0]["model"] == "test-model"
         assert "ершик для унитаза" in seen[0]["messages"][1]["content"]
         assert await ai.categorize("мусор", "expense") is None
+        assert "непонятный ответ" in ai.status
         assert await ai.categorize("медленно", "expense") is None  # таймаут — не падаем
+        assert "нет связи" in ai.status
+        assert await ai.categorize("лимит", "expense") is None
+        assert "лимит" in ai.status
+        assert await ai.categorize("снова ершик", "expense") == "home"
+        assert ai.status == "работает ✅"  # ошибка ушла, как только сервис снова ответил
         await ai.close()
         bad = AICategorizer(make_config("ключ-плохой", url, "m"), trust_env=False)  # type: ignore[arg-type]
         assert await bad.categorize("что-то", "expense") is None
+        assert "ключ не принят" in bad.status
         await bad.close()
+        old = AICategorizer(make_config("ключ-хороший", url, "старая-модель"), trust_env=False)  # type: ignore[arg-type]
+        assert await old.categorize("что-то", "expense") is None
+        assert "AI_MODEL" in old.status
+        await old.close()
     finally:
         await runner.cleanup()
     # Сервис недоступен вообще — тоже не падаем.
     down = AICategorizer(make_config("k", url, "m"), timeout=1, trust_env=False)  # type: ignore[arg-type]
     assert await down.categorize("что-то", "expense") is None
     await down.close()
+
+
+async def test_startup_probe_reports_in_log(caplog: pytest.LogCaptureFixture) -> None:
+    from finbot.ai import probe
+
+    async def ok(request: web.Request) -> web.Response:
+        return web.json_response({"choices": [{"message": {"content": "cafe"}}]})
+
+    async def denied(request: web.Request) -> web.Response:
+        return web.json_response({"error": "bad key"}, status=401)
+
+    for handler, expected in ((ok, "Нейросеть отвечает"), (denied, "Нейросеть не работает: ключ не принят")):
+        runner, url = await _fake_openai(handler)
+        ai = AICategorizer(make_config("k", url, "m"), trust_env=False)  # type: ignore[arg-type]
+        caplog.clear()
+        with caplog.at_level("INFO", logger="finbot.ai"):
+            await probe(ai)
+        await ai.close()
+        await runner.cleanup()
+        assert expected in caplog.text, caplog.text

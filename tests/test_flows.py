@@ -542,6 +542,7 @@ async def test_bot_learns_from_category_choice(chat: Harness) -> None:
 
 class FakeAI:
     title = "Fake (test)"
+    status = "работает ✅"
 
     def __init__(self, answer: str | None) -> None:
         self.answer = answer
