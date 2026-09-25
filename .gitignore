@@ -1,0 +1,14 @@
+# секреты и личные данные — никогда не в git
+.env
+data/
+
+# окружение и кэши
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
