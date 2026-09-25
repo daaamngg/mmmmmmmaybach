@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from typing import Any
 
 from aiogram import BaseMiddleware
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import Chat, TelegramObject, Update, User
 
 from .context import App
@@ -15,11 +17,20 @@ from .context import App
 log = logging.getLogger(__name__)
 
 
+STRANGER_TEXT = (
+    "🔒 Это личный бот, он отвечает только своему владельцу.\n\n"
+    "Твой Telegram ID: <code>{id}</code>\n\n"
+    "Если бот твой — значит, на сервере указан другой ID. Исправь одной командой:\n"
+    "<code>finbot owner {id}</code>"
+)
+
+
 class OwnerOnly(BaseMiddleware):
     """Пропускает только личные сообщения владельца.
 
     Владелец — OWNER_ID из .env. Если он не задан, бота «забирает» себе первый,
-    кто отправит /start (ID сохраняется в базе). Все остальные молча игнорируются.
+    кто отправит /start (ID сохраняется в базе). Остальным бот один раз сообщает их ID —
+    если владелец ошибся с OWNER_ID, он сразу увидит, что поправить.
     """
 
     def __init__(self) -> None:
@@ -56,6 +67,16 @@ class OwnerOnly(BaseMiddleware):
         if user.id != owner:
             if user.id not in self._reported:
                 self._reported.add(user.id)
-                log.warning("Чужой пользователь %s (id=%s) пытался написать боту — игнорирую", user.full_name, user.id)
+                log.warning(
+                    "Чужой пользователь %s (id=%s) написал боту — игнорирую. "
+                    "Если это ты, выполни на сервере: finbot owner %s",
+                    user.full_name,
+                    user.id,
+                    user.id,
+                )
+                message = event.message if isinstance(event, Update) else None
+                if message is not None:
+                    with suppress(TelegramAPIError):
+                        await message.answer(STRANGER_TEXT.format(id=user.id))
             return None
         return await handler(event, data)

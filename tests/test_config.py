@@ -8,7 +8,7 @@ from finbot.config import ConfigError, load_config
 
 
 def _env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **values: str) -> Path:
-    for key in ("BOT_TOKEN", "OWNER_ID", "TIMEZONE", "DATA_DIR", "PROXY"):
+    for key in ("BOT_TOKEN", "OWNER_ID", "TIMEZONE", "DATA_DIR", "PROXY", "WEBAPP_URL", "WEBAPP_PORT"):
         # setenv+delenv: после теста monkeypatch вернёт окружение как было,
         # даже если load_dotenv что-то в него записал.
         monkeypatch.setenv(key, "")
@@ -33,12 +33,26 @@ def test_valid_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         ({"BOT_TOKEN": "nonsense"}, "BOT_TOKEN"),
         ({"BOT_TOKEN": "1:a", "OWNER_ID": "me"}, "OWNER_ID"),
         ({"BOT_TOKEN": "1:a", "TIMEZONE": "Mars/Base"}, "TIMEZONE"),
+        ({"BOT_TOKEN": "1:a", "WEBAPP_URL": "http://1-2-3-4.sslip.io"}, "WEBAPP_URL"),
+        ({"BOT_TOKEN": "1:a", "WEBAPP_URL": "https://ok.example,ftp://bad"}, "WEBAPP_URL"),
+        ({"BOT_TOKEN": "1:a", "WEBAPP_PORT": "eighty"}, "WEBAPP_PORT"),
     ],
 )
 def test_bad_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, values: dict[str, str], message: str) -> None:
     env = _env(tmp_path, monkeypatch, **values)
     with pytest.raises(ConfigError, match=message):
         load_config(env)
+
+
+def test_webapp_urls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env = _env(tmp_path, monkeypatch, BOT_TOKEN="1:a")
+    cfg = load_config(env)
+    assert cfg.webapp_url is None and cfg.webapp_urls == () and cfg.webapp_port == 0  # выключено
+
+    env = _env(tmp_path, monkeypatch, BOT_TOKEN="1:a", WEBAPP_URL="https://1-2-3-4.sslip.io/, https://1-2-3-4.nip.io")
+    cfg = load_config(env)
+    assert cfg.webapp_urls == ("https://1-2-3-4.sslip.io", "https://1-2-3-4.nip.io")
+    assert cfg.webapp_port == 8080 and cfg.webapp_host == "127.0.0.1"
 
 
 def test_run_exits_with_code_2_on_bad_config(tmp_path: Path) -> None:

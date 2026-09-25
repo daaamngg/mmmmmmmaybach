@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Maybach</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/app.css?v={{v}}">
+  <script src="/static/app.js?v={{v}}" defer></script>
+</head>
+<body>
+  <div class="app" id="app">
+    <main class="view" id="view" aria-live="polite">
+      <div class="loading">Загрузка…</div>
+    </main>
+    <button class="fab" id="fab" type="button" aria-label="Добавить запись" hidden>+</button>
+    <nav class="tabs" id="tabs" hidden>
+      <button class="tab active" type="button" data-tab="home"><span class="tab-icon">🏠</span>Главная</button>
+      <button class="tab" type="button" data-tab="goals"><span class="tab-icon">🎯</span>Цели</button>
+      <button class="tab" type="button" data-tab="calendar"><span class="tab-icon">📅</span>Календарь</button>
+      <button class="tab" type="button" data-tab="history"><span class="tab-icon">🧾</span>История</button>
+    </nav>
+  </div>
+
+  <div class="sheet" id="sheet" hidden>
+    <div class="sheet-backdrop" data-close></div>
+    <section class="sheet-panel" role="dialog" aria-modal="true">
+      <div class="sheet-grip" data-close></div>
+      <div class="sheet-body" id="sheetBody"></div>
+    </section>
+  </div>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+  <noscript>Для приложения нужен JavaScript.</noscript>
+</body>
+</html>

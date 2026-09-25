@@ -10,9 +10,13 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from . import categories
 from .db import Database
+
+if TYPE_CHECKING:
+    from .ai import AICategorizer
 
 # Слова, которые ничего не говорят о категории: «купил хлеб» — главное слово «хлеб».
 STOPWORDS = frozenset(
@@ -81,3 +85,16 @@ async def guess_kind(db: Database, note: str | None) -> str:
         if expense and not income:
             return "expense"
     return categories.guess_kind(note)
+
+
+async def refine(db: Database, ai: AICategorizer, tx_id: int, kind: str, note: str) -> str | None:
+    """Спрашивает нейросеть про незнакомую запись. Возвращает категорию, если она применена."""
+    category = await ai.categorize(note, kind)
+    default = categories.default_for(kind)
+    if category is None or category == default:
+        return None
+    # Меняем, только если ты ещё не выбрал категорию сам.
+    if not await db.set_category_if(tx_id, default, category):
+        return None
+    await remember(db, note, kind, category, source="ai")
+    return category

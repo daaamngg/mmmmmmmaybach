@@ -909,6 +909,13 @@ class Database:
         return [Photo(r["id"], r["goal_id"], r["file_id"], r["file_unique_id"], r["local_path"]) for r in rows]
 
     @_db
+    def get_photo(self, photo_id: int) -> Photo | None:
+        r = self.c.execute(
+            "SELECT id, goal_id, file_id, file_unique_id, local_path FROM goal_photos WHERE id = ?", (photo_id,)
+        ).fetchone()
+        return Photo(r["id"], r["goal_id"], r["file_id"], r["file_unique_id"], r["local_path"]) if r else None
+
+    @_db
     def update_photo(self, photo_id: int, *, file_id: str | None = None, local_path: str | None = None) -> None:
         with self._write() as c:
             if file_id is not None:

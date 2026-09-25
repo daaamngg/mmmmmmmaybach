@@ -7,6 +7,9 @@ services:
     env_file: .env
     environment:
       DATA_DIR: /data
+      WEBAPP_HOST: 0.0.0.0  # мини-приложение: свой HTTPS-прокси → порт 8080 контейнера, адрес — в WEBAPP_URL
+    # ports:
+    #   - "127.0.0.1:8080:8080"
     volumes:
       - finbot-data:/data
 

@@ -6,6 +6,9 @@
 # Настройки можно передать заранее, тогда скрипт не будет их спрашивать:
 #   ... | OWNER_ID=123456789 TIMEZONE=Europe/Moscow bash
 #
+# Мини-приложение (кнопка «Приложение» в чате) настраивается само: Caddy + бесплатный
+# HTTPS-адрес <ip>.sslip.io. Свой домен: WEBAPP_DOMAIN=fin.example.com. Без него: WEBAPP=off.
+#
 # Повторный запуск безопасен: обновит код, а данные и настройки оставит как есть.
 set -euo pipefail
 
@@ -55,6 +58,8 @@ set_env() {
     rm -f "$tmp"
 }
 
+get_env() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -n 1 | cut -d= -f2- || true; }
+
 valid_token() { [[ "$1" =~ ^[0-9]{5,}:[A-Za-z0-9_-]{30,}$ ]]; }
 
 # ── проверки ──
@@ -64,7 +69,7 @@ command -v apt-get >/dev/null || die "Нужна Ubuntu 22.04+ или Debian 12+
 say "Ставлю системные пакеты (git, Python)…"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq >/dev/null
-apt-get install -y -qq git python3 python3-venv ca-certificates >/dev/null
+apt-get install -y -qq git python3 python3-venv ca-certificates curl iproute2 >/dev/null
 
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' \
     || die "Нужен Python 3.10+, а в системе $(python3 -V). Возьми сервер с Ubuntu 22.04/24.04 или Debian 12."
@@ -93,9 +98,7 @@ say "Ставлю зависимости Python…"
 "$APP_DIR/.venv/bin/python" -m compileall -q "$APP_DIR/finbot" "$APP_DIR/run.py" >/dev/null
 
 # ── настройки ──
-new_config=""
 if [ ! -f "$ENV_FILE" ]; then
-    new_config=1
     echo
     say "Настройка. Токен — от @BotFather, твой ID — от @userinfobot."
     while :; do
@@ -127,7 +130,7 @@ EOF
 else
     say "Настройки уже есть ($ENV_FILE) — оставляю."
     # Явно переданные значения обновляем (например, BOT_TOKEN=… после перевыпуска).
-    for key in BOT_TOKEN OWNER_ID TIMEZONE AI_API_KEY; do
+    for key in BOT_TOKEN OWNER_ID TIMEZONE AI_API_KEY WEBAPP; do
         if [ -n "${!key:-}" ]; then
             [ "$key" != BOT_TOKEN ] || valid_token "$BOT_TOKEN" || die "BOT_TOKEN не похож на токен."
             set_env "$key" "${!key}"
@@ -148,9 +151,17 @@ install -m 755 "$APP_DIR/deploy/finbot" /usr/local/bin/finbot
 
 # ── автозапуск ──
 if [ ! -d /run/systemd/system ]; then
-    warn "systemd не найден (контейнер/WSL?) — автозапуск не настроен. Запустить вручную:"
+    warn "systemd не найден (контейнер/WSL?) — автозапуск и мини-приложение не настроены. Запустить вручную:"
     echo "    bash -c 'set -a; . $ENV_FILE; set +a; exec setpriv --reuid=$BOT_USER --regid=$BOT_USER --init-groups $APP_DIR/.venv/bin/python $APP_DIR/run.py'"
     exit 0
+fi
+
+# ── мини-приложение: HTTPS-адрес через Caddy ──
+[ -z "${WEBAPP:-}" ] || set_env WEBAPP "$WEBAPP"
+if [ "$(get_env WEBAPP)" != off ]; then
+    say "Настраиваю мини-приложение (HTTPS)…"
+    ENV_FILE="$ENV_FILE" bash "$APP_DIR/deploy/webapp.sh" ||
+        warn "Мини-приложение пока не настроено — бот работает и без него. Повторить: finbot webapp on"
 fi
 
 cat >/etc/systemd/system/$SERVICE.service <<EOF
@@ -203,9 +214,13 @@ if [ -n "$started" ]; then
     if grep -qE '^AI_API_KEY=.+' "$ENV_FILE"; then
         /usr/local/bin/finbot ai-status || true
     fi
-    [ -z "$new_config" ] || echo "   Открой бота в Telegram и отправь /start."
+    if [ -n "$(get_env WEBAPP_URL)" ]; then
+        /usr/local/bin/finbot webapp wait || true
+    fi
+    echo "   Открой бота в Telegram и отправь /start."
     echo
-    echo "   Управление: finbot status | logs | restart | update | token | ai | backup | import"
+    echo "   Бот молчит? Выполни: finbot doctor — он найдёт причину."
+    echo "   Управление: finbot status | logs | restart | update | token | owner | webapp | ai | backup"
     exit 0
 fi
 
@@ -213,6 +228,7 @@ echo
 warn "Бот не подтвердил запуск. Последние строки лога:"
 journalctl -u "$SERVICE" --since "$since" -n 25 --no-pager || true
 echo
+warn "Подробная проверка: finbot doctor"
 warn "Если там «Telegram не принял токен» — выполни: finbot token"
 warn "Если «Нет связи с Telegram» — у сервера нет доступа к api.telegram.org (сервер в РФ?)."
 warn "Нужен сервер за границей (например, Нидерланды) или PROXY в $ENV_FILE."

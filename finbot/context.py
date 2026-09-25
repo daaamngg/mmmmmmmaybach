@@ -19,6 +19,7 @@ class App:
     pending_photos: dict[int, list[tuple[str, str | None]]] = field(default_factory=dict)
     photos_added: dict[int, int] = field(default_factory=dict)
     ai: AICategorizer | None = None  # нейросеть для категорий (если задан AI_API_KEY)
+    webapp_url: str | None = None  # адрес мини-приложения, который точно открывается (проверен)
     debouncer: Debouncer = field(init=False)
 
     def __post_init__(self) -> None:
@@ -27,3 +28,7 @@ class App:
     @property
     def owner_id(self) -> int | None:
         return self.config.owner_id or self.db.settings.owner_id
+
+    @property
+    def webapp_ready(self) -> bool:
+        return self.webapp_url is not None

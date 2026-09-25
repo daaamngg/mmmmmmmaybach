@@ -80,14 +80,8 @@ async def record(
 async def refine_with_ai(
     bot: Bot, db: Database, ai: AICategorizer, tx_id: int, kind: str, note: str, chat_id: int, message_id: int
 ) -> None:
-    category = await ai.categorize(note, kind)
-    default = categories.default_for(kind)
-    if category is None or category == default:
+    if await classify.refine(db, ai, tx_id, kind, note) is None:
         return
-    # Меняем, только если ты ещё не выбрал категорию сам.
-    if not await db.set_category_if(tx_id, default, category):
-        return
-    await classify.remember(db, note, kind, category, source="ai")
     text, markup = await tx_view(db, tx_id, ai_note=True)
     with suppress(TelegramAPIError):
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)

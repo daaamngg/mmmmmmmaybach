@@ -38,9 +38,13 @@ async def test_start_claims_owner_and_ignores_strangers(chat: Harness) -> None:
     assert "Создать первую цель" in chat.screen()
     before = len(chat.tg.calls)
     await chat.send("/start", uid=STRANGER)
+    # Чужому — один ответ с его ID: если OWNER_ID перепутан, владелец сразу видит, что поправить.
+    answer = chat.sent_texts()[-1]
+    assert f"<code>{STRANGER}</code>" in answer and f"finbot owner {STRANGER}" in answer
     await chat.send("500 шаурма", uid=STRANGER)
-    assert len(chat.tg.calls) == before  # чужим бот не отвечает вообще
+    assert len(chat.tg.calls) == before + 1  # дальше — тишина
     assert chat.db.settings.owner_id == OWNER
+    assert await chat.db.count_tx() == 0
 
 
 async def test_quick_input_income_and_expense(chat: Harness) -> None:

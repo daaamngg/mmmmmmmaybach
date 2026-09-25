@@ -37,6 +37,14 @@ class SettingsFlow(StatesGroup):
     wipe = State()
 
 
+def webapp_status(app: App) -> str:
+    if app.webapp_ready:
+        return "работает ✅ (кнопка «Приложение» слева от поля ввода)"
+    if app.config.webapp_url:
+        return "запускается — жду HTTPS-сертификат (проверка на сервере: finbot doctor)"
+    return "не включено (на сервере: finbot webapp on)"
+
+
 async def settings_view(db: Database, app: App) -> tuple[str, InlineKeyboardMarkup]:
     s = db.settings
     harsh = "☠️ Без цензуры" if s.harsh >= 2 else "🔥 Жёстко"
@@ -53,6 +61,7 @@ async def settings_view(db: Database, app: App) -> tuple[str, InlineKeyboardMark
         "",
         f"🧠 Запомнил твоих слов для категорий: <b>{learned}</b>",
         f"🤖 Нейросеть для категорий: {ai}",
+        f"📱 Приложение: {webapp_status(app)}",
     ]
     markup = kb(
         [btn("⚖️ Процент в цели", SetCb(action="pct")), btn("💱 Валюта", SetCb(action="cur"))],

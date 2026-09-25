@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -13,7 +13,8 @@ from .. import motivation, texts
 from ..callbacks import Nav
 from ..context import App
 from ..db import Database
-from ..ui import Event, render
+from ..ui import Event, kb, render
+from ..webapp.buttons import app_button, ensure_menu_button
 from . import calendar, common, entry, goals, history, settings, stats, wish
 
 router = Router(name="menu")
@@ -54,15 +55,43 @@ async def open_section(section: str, event: Event, state: FSMContext, db: Databa
     return True
 
 
+APP_INVITE = (
+    "📱 Баланс, цели с фото, календарь и история — в приложении. Кнопка «Приложение» есть и слева от поля ввода."
+)
+
+
 @router.message(CommandStart(), StateFilter("*"))
-async def cmd_start(message: Message, state: FSMContext, db: Database) -> None:
+async def cmd_start(message: Message, state: FSMContext, db: Database, app: App, bot: Bot) -> None:
     await state.clear()
+    await ensure_menu_button(bot, app)
     if await db.count_tx() == 0 and not await db.goals(None):
         await message.answer(texts.WELCOME, reply_markup=k.main_menu())
         await common.show_onboarding(message)
-        return
-    await message.answer("🔥 На связи. Stay hard.", reply_markup=k.main_menu())
-    await common.show_dashboard(message, db)
+    else:
+        await message.answer("🔥 На связи. Stay hard.", reply_markup=k.main_menu())
+        await common.show_dashboard(message, db)
+    button = app_button(app)
+    if button is not None:
+        await message.answer(APP_INVITE, reply_markup=kb([button]))
+
+
+@router.message(Command("app"), StateFilter("*"))
+async def cmd_app(message: Message, state: FSMContext, app: App, bot: Bot) -> None:
+    await state.clear()
+    await ensure_menu_button(bot, app)
+    button = app_button(app)
+    if button is not None:
+        await message.answer(APP_INVITE, reply_markup=kb([button]))
+    elif app.config.webapp_url:
+        await message.answer(
+            "⏳ Приложение запускается: сервер получает HTTPS-сертификат, обычно это пара минут.\n"
+            "Если дольше — выполни на сервере <code>finbot doctor</code>, он скажет, что не так."
+        )
+    else:
+        await message.answer(
+            "📱 Приложение ещё не включено. На сервере выполни:\n<code>finbot webapp on</code>\n"
+            "Через минуту здесь появится кнопка «Приложение»."
+        )
 
 
 COMMAND_SECTIONS = {

@@ -24,6 +24,8 @@ from .context import App
 from .db import Database
 from .middlewares import OwnerOnly
 from .scheduler import Scheduler
+from .webapp.buttons import ensure_menu_button
+from .webapp.server import WebServer
 
 log = logging.getLogger("finbot")
 
@@ -90,9 +92,13 @@ async def main() -> None:
     bot = make_bot(config)
     dp = build_dispatcher(app)
     scheduler = Scheduler(bot, app)
+    web = WebServer(app, bot) if config.webapp_urls else None
     tasks: list[asyncio.Task[None]] = []
 
     async def on_startup() -> None:
+        # Если этот токен раньше подключали к сервису с вебхуком, Telegram не отдаёт сообщения
+        # обычному опросу — бот бы молчал. Снимаем вебхук (сообщения в очереди сохраняются).
+        await bot.delete_webhook()
         await bot.set_my_commands(texts.COMMANDS, scope=BotCommandScopeAllPrivateChats())
         me = await bot.get_me()
         log.info("Бот @%s запущен. Данные: %s", me.username, config.data_dir)
@@ -102,10 +108,26 @@ async def main() -> None:
             log.info("Нейросеть для категорий: %s", app.ai.title)
             ui.spawn(probe_ai(app.ai))
         tasks.append(asyncio.create_task(scheduler.run()))
+        if web is not None:
+            try:
+                await web.start()
+            except OSError as e:
+                log.error(
+                    "Мини-приложение не запустилось: порт %s:%s занят или недоступен (%s)",
+                    config.webapp_host,
+                    config.webapp_port,
+                    e,
+                )
+            else:
+                tasks.append(asyncio.create_task(web.watch()))
+        else:
+            ui.spawn(ensure_menu_button(bot, app))  # приложение выключили — вернуть обычное меню
 
     async def on_shutdown() -> None:
         for task in tasks:
             task.cancel()
+        if web is not None:
+            await web.stop()
         with suppress(asyncio.TimeoutError):
             await asyncio.wait_for(ui.drain(), timeout=5)
         if app.ai is not None:

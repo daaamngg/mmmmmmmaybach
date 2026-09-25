@@ -290,8 +290,11 @@ async def cover(db: Database, goal: Goal) -> PhotoSource | None:
 
 async def celebrate(event: Event, db: Database, goal_ids: tuple[int, ...] | list[int]) -> None:
     """Праздничное сообщение (с фото цели), когда цель достигнута."""
-    bot = event.bot
-    assert bot is not None
+    assert event.bot is not None
+    await celebrate_to(event.bot, chat_id_of(event), db, goal_ids)
+
+
+async def celebrate_to(bot: Bot, chat_id: int, db: Database, goal_ids: tuple[int, ...] | list[int]) -> None:
     cur = db.settings.currency
     for gid in goal_ids:
         goal = await db.get_goal(gid)
@@ -307,7 +310,7 @@ async def celebrate(event: Event, db: Database, goal_ids: tuple[int, ...] | list
             [btn("🛒 Купил! Закрыть цель", GoalCb(action="buy", id=goal.id))],
             [btn("🎯 Открыть цель", GoalCb(action="open", id=goal.id))],
         )
-        await send_screen(bot, chat_id_of(event), text, markup, photo)
+        await send_screen(bot, chat_id, text, markup, photo)
         await remember_refreshed(db, photo)
 
 

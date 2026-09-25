@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from datetime import tzinfo
 from pathlib import Path
@@ -28,6 +29,15 @@ class Config:
     proxy: str | None = None
     ai: AIConfig | None = None
     telegram_api: str | None = None  # свой адрес Bot API (зеркало, если api.telegram.org заблокирован)
+    # Публичный https-адрес мини-приложения. Можно несколько через запятую — запасные:
+    # бот сам выберет первый, который открывается.
+    webapp_url: str | None = None
+    webapp_host: str = "127.0.0.1"
+    webapp_port: int = 0  # 0 — встроенный сайт мини-приложения выключен
+
+    @property
+    def webapp_urls(self) -> tuple[str, ...]:
+        return tuple(u for u in re.split(r"[,\s]+", self.webapp_url or "") if u)
 
     @property
     def db_path(self) -> Path:
@@ -82,6 +92,17 @@ def load_config(env_file: Path | None = None) -> Config:
     telegram_api = os.getenv("TELEGRAM_API_URL", "").strip().rstrip("/") or None
     if telegram_api and not telegram_api.startswith(("http://", "https://")):
         raise ConfigError("TELEGRAM_API_URL должен начинаться с http:// или https://")
+    urls = [u.rstrip("/") for u in re.split(r"[,\s]+", os.getenv("WEBAPP_URL", "")) if u]
+    for url in urls:
+        if not re.fullmatch(r"https://[^\s/?#]+(/[^\s?#]*)?", url):
+            raise ConfigError(
+                f"WEBAPP_URL: «{url}» — нужен адрес вида https://… (Telegram открывает мини-приложения только по HTTPS)"
+            )
+    webapp_url = ",".join(urls) or None
+    port_raw = os.getenv("WEBAPP_PORT", "").strip()
+    if port_raw and not port_raw.isdigit():
+        raise ConfigError("WEBAPP_PORT должен быть числом, например 8080")
+    webapp_port = int(port_raw) if port_raw else (8080 if webapp_url else 0)
     return Config(
         bot_token=token,
         owner_id=owner_id,
@@ -90,4 +111,7 @@ def load_config(env_file: Path | None = None) -> Config:
         proxy=proxy,
         ai=ai,
         telegram_api=telegram_api,
+        webapp_url=webapp_url,
+        webapp_host=os.getenv("WEBAPP_HOST", "").strip() or "127.0.0.1",
+        webapp_port=webapp_port,
     )
