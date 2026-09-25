@@ -39,3 +39,19 @@ def test_bad_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, values: dic
     env = _env(tmp_path, monkeypatch, **values)
     with pytest.raises(ConfigError, match=message):
         load_config(env)
+
+
+def test_run_exits_with_code_2_on_bad_config(tmp_path: Path) -> None:
+    """Неверная настройка → код 2: systemd не будет перезапускать бот по кругу."""
+    import os
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parent.parent
+    env = {k: v for k, v in os.environ.items() if k not in ("BOT_TOKEN", "OWNER_ID", "TIMEZONE", "DATA_DIR", "PROXY")}
+    env["DATA_DIR"] = str(tmp_path)
+    result = subprocess.run(
+        [sys.executable, str(root / "run.py")], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "BOT_TOKEN" in result.stdout

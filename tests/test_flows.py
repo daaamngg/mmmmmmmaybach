@@ -526,3 +526,88 @@ async def test_want_with_empty_wallet(chat: Harness) -> None:
     await chat.click("Не покупаю")
     assert "ОТКАЗ ЗАСЧИТАН" in chat.last_text()
     assert "Отправить" not in chat.screen(1)  # отправлять нечего
+
+
+async def test_bot_learns_from_category_choice(chat: Harness) -> None:
+    await start(chat)
+    await chat.send("400 бенз 95")
+    assert "📦 Прочее" in chat.last_text()
+    await chat.click("Транспорт")
+    assert "🚕 Транспорт" in chat.last_text()
+    # В следующий раз — сразу правильно, без вопросов.
+    await chat.send("бенз 92 1200")
+    assert "🚕 Транспорт" in chat.last_text()
+    assert "Прочее" not in chat.screen(1)
+
+
+class FakeAI:
+    title = "Fake (test)"
+
+    def __init__(self, answer: str | None) -> None:
+        self.answer = answer
+        self.calls: list[tuple[str, str]] = []
+
+    async def categorize(self, note: str, kind: str) -> str | None:
+        self.calls.append((note, kind))
+        return self.answer
+
+
+async def test_ai_fills_unknown_category_in_background(chat: Harness) -> None:
+    await start(chat)
+    ai = FakeAI("home")
+    chat.app.ai = ai  # type: ignore[assignment]
+    try:
+        await chat.send("350 ершик для унитаза")
+        assert ai.calls == [("ершик для унитаза", "expense")]
+        text = chat.last_text()
+        assert "🏠 Жильё и счета" in text and "нейросеть" in text
+        assert (await chat.db.recent_txs(1))[0].category == "home"
+        # Запомнил: второй раз нейросеть уже не нужна.
+        await chat.send("200 ершик для унитаза")
+        assert len(ai.calls) == 1 and "🏠 Жильё и счета" in chat.last_text()
+        # Известные слова вообще не отправляются в нейросеть.
+        await chat.send("300 шаурма")
+        assert len(ai.calls) == 1
+        await chat.send("/settings")
+        assert "Fake (test)" in chat.last_text()
+    finally:
+        chat.app.ai = None
+
+
+async def test_ai_never_overrides_your_choice(chat: Harness) -> None:
+    await start(chat)
+    ai = FakeAI("fun")
+    chat.app.ai = ai  # type: ignore[assignment]
+    try:
+        # Ты выбрал категорию раньше, чем ответила нейросеть, — её ответ не применяется.
+        await chat.db.set_category_if(0, "other", "fun")  # no-op на несуществующей записи
+        tx_id = await chat.db.add_expense(10_000, category="other", note="штуковина")
+        await chat.db.set_category(tx_id, "food")
+        from finbot.handlers.entry import refine_with_ai
+
+        await refine_with_ai(chat.bot, chat.db, ai, tx_id, "expense", "штуковина", 1, 1)  # type: ignore[arg-type]
+        assert (await chat.db.get_tx(tx_id)).category == "food"
+        # Нейросеть ответила «не знаю» — запись просто остаётся в «Прочем».
+        ai.answer = None
+        await chat.send("500 непонятная вещь")
+        assert "📦 Прочее" in chat.last_text()
+    finally:
+        chat.app.ai = None
+
+
+async def test_photos_survive_moving_data_folder(chat: Harness) -> None:
+    await start(chat)
+    goal_id = await make_goal(chat, photo="car")
+    photo = (await chat.db.photos(goal_id))[0]
+    assert photo.local_path == f"photos/goal_{goal_id}/{photo.id}.jpg"  # путь относительно папки данных
+    from finbot.handlers.goals import local_file
+
+    assert local_file(chat.db, photo.local_path).is_file()
+    # Старый формат (абсолютный путь с другого компьютера) тоже находится.
+    expected = local_file(chat.db, photo.local_path)
+    for legacy in (
+        f"C:\\Users\\me\\bot\\data\\photos\\goal_{goal_id}\\{photo.id}.jpg",
+        f"C:/Users/me/bot/data/photos/goal_{goal_id}/{photo.id}.jpg",
+        f"/home/old/bot/data/photos/goal_{goal_id}/{photo.id}.jpg",
+    ):
+        assert local_file(chat.db, legacy) == expected, legacy

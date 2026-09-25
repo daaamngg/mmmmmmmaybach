@@ -168,7 +168,7 @@ class Harness:
 
 @pytest_asyncio.fixture
 async def chat(db: Database, frozen: FrozenClock, tmp_path: Path) -> AsyncIterator[Harness]:
-    config = Config(bot_token="42:TEST", owner_id=None, data_dir=tmp_path / "data", timezone=TZ)
+    config = Config(bot_token="42:TEST", owner_id=None, data_dir=tmp_path, timezone=TZ)
     app = App(config=config, db=db, photo_debounce=0.01)
     dp = shared_dispatcher(app)
     from aiogram.fsm.storage.memory import MemoryStorage

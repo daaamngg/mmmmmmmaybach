@@ -2,23 +2,27 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import date
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.callback_answer import CallbackAnswer
 
-from .. import categories, clock, motivation, texts
+from .. import categories, classify, clock, motivation, texts
+from ..ai import AICategorizer
 from ..callbacks import TxCb
+from ..context import App
 from ..db import Database, Tx, TxBlocked
 from ..fmt import esc, fmt_day, fmt_day_rel, month_bounds, pct, plural, truncate
 from ..keyboards import cancel_kb
 from ..money import money
 from ..parsing import parse_entry
-from ..ui import Event, ask, btn, chunks, finish, kb, render
+from ..ui import Event, ask, btn, chunks, finish, kb, render, spawn
 from . import goals as goals_ui
 
 router = Router(name="entry")
@@ -42,6 +46,7 @@ def message_moment(message: Message) -> tuple[date, int]:
 async def record(
     message: Message,
     db: Database,
+    app: App,
     kind: str,
     amount: int,
     note: str,
@@ -50,25 +55,42 @@ async def record(
 ) -> None:
     """Сохраняет доход/расход и показывает карточку записи."""
     note_value = note or None
+    category = await classify.resolve(db, note, kind)
+    completed: tuple[int, ...] = ()
     if kind == "income":
-        cat = categories.detect(note, "income") or categories.DEFAULT_INCOME
-        res = await db.add_income(amount, category=cat, note=note_value, day=day, created_at=created_at)
-        text, markup = await tx_view(db, res.tx_id)
-        await message.answer(text, reply_markup=markup)
-        if res.completed:
-            await goals_ui.celebrate(message, db, res.completed)
+        res = await db.add_income(
+            amount, category=category or categories.DEFAULT_INCOME, note=note_value, day=day, created_at=created_at
+        )
+        tx_id, completed, mode = res.tx_id, res.completed, "main"
+    else:
+        tx_id = await db.add_expense(
+            amount, category=category or categories.DEFAULT_EXPENSE, note=note_value, day=day, created_at=created_at
+        )
+        # Категорию не узнали — сразу предлагаем выбрать одним нажатием.
+        mode = "cats" if category is None else "main"
+    text, markup = await tx_view(db, tx_id, mode=mode)
+    sent = await message.answer(text, reply_markup=markup)
+    if category is None and note and app.ai is not None and message.bot is not None:
+        # Нейросеть думает в фоне: запись уже сохранена и показана, лагов нет.
+        spawn(refine_with_ai(message.bot, db, app.ai, tx_id, kind, note, sent.chat.id, sent.message_id))
+    if completed:
+        await goals_ui.celebrate(message, db, completed)
+
+
+async def refine_with_ai(
+    bot: Bot, db: Database, ai: AICategorizer, tx_id: int, kind: str, note: str, chat_id: int, message_id: int
+) -> None:
+    category = await ai.categorize(note, kind)
+    default = categories.default_for(kind)
+    if category is None or category == default:
         return
-    detected = categories.detect(note, "expense")
-    tx_id = await db.add_expense(
-        amount,
-        category=detected or categories.DEFAULT_EXPENSE,
-        note=note_value,
-        day=day,
-        created_at=created_at,
-    )
-    # Категорию не узнали — сразу предлагаем выбрать одним нажатием.
-    text, markup = await tx_view(db, tx_id, mode="cats" if detected is None else "main")
-    await message.answer(text, reply_markup=markup)
+    # Меняем, только если ты ещё не выбрал категорию сам.
+    if not await db.set_category_if(tx_id, default, category):
+        return
+    await classify.remember(db, note, kind, category, source="ai")
+    text, markup = await tx_view(db, tx_id, ai_note=True)
+    with suppress(TelegramAPIError):
+        await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
 
 
 async def start_entry(event: Event, state: FSMContext, db: Database, kind: str, day: date | None = None) -> None:
@@ -89,7 +111,7 @@ async def start_entry(event: Event, state: FSMContext, db: Database, kind: str, 
 
 
 @router.message(EntryFlow.amount, F.text)
-async def entry_amount(message: Message, state: FSMContext, db: Database) -> None:
+async def entry_amount(message: Message, state: FSMContext, db: Database, app: App) -> None:
     data = await state.get_data()
     today = clock.today()
     parsed = parse_entry(message.text or "", today)
@@ -103,14 +125,14 @@ async def entry_amount(message: Message, state: FSMContext, db: Database) -> Non
         await message.answer("⏳ Будущее ещё не наступило. Записывай то, что уже случилось.")
         return
     await finish(message, state)
-    await record(message, db, data.get("kind", "expense"), parsed.amount, parsed.note, day, created_at)
+    await record(message, db, app, data.get("kind", "expense"), parsed.amount, parsed.note, day, created_at)
 
 
 # ─────────────────────────── быстрый ввод ───────────────────────────
 
 
 @router.message(StateFilter(None), F.text, ~F.text.startswith("/"))
-async def quick_input(message: Message, db: Database) -> None:
+async def quick_input(message: Message, db: Database, app: App) -> None:
     today = clock.today()
     parsed = parse_entry(message.text or "", today)
     if parsed is None:
@@ -121,13 +143,13 @@ async def quick_input(message: Message, db: Database) -> None:
     elif parsed.sign == "-":
         kind = "expense"
     else:
-        kind = categories.guess_kind(parsed.note)
+        kind = await classify.guess_kind(db, parsed.note)
     msg_day, created_at = message_moment(message)
     day = parsed.day or msg_day
     if day > today:
         await message.answer("⏳ Будущее ещё не наступило. Записывай то, что уже случилось.")
         return
-    await record(message, db, kind, parsed.amount, parsed.note, day, created_at)
+    await record(message, db, app, kind, parsed.amount, parsed.note, day, created_at)
 
 
 # ─────────────────────────── карточка записи ───────────────────────────
@@ -148,7 +170,9 @@ def tx_line(tx: Tx, cur: str) -> str:
     return f"⚙️ {money(value, cur, signed=True)}{note or ' · корректировка'}"
 
 
-async def tx_view(db: Database, tx_id: int, mode: str = "main") -> tuple[str, InlineKeyboardMarkup | None]:
+async def tx_view(
+    db: Database, tx_id: int, mode: str = "main", *, ai_note: bool = False
+) -> tuple[str, InlineKeyboardMarkup | None]:
     """Текст и кнопки карточки записи. mode: main | cats | pct."""
     tx = await db.get_tx(tx_id)
     if tx is None:
@@ -168,6 +192,8 @@ async def tx_view(db: Database, tx_id: int, mode: str = "main") -> tuple[str, In
         lines.append(f"📝 {esc(tx.note)}")
     if tx.day != today:
         lines.append(f"📅 {fmt_day_rel(tx.day, today)}")
+    if ai_note:
+        lines.append("🤖 Категорию подобрала нейросеть. Не так — жми «🏷 Категория».")
     lines.append("")
 
     if tx.kind == "income":
@@ -279,7 +305,9 @@ async def tx_set_category(
         await _show(cb, db, callback_data.id)
         return
     await db.set_category(tx.id, callback_data.arg)
-    callback_answer.text = categories.get(callback_data.arg).label
+    # Запоминаем выбор: в следующий раз эти слова сразу попадут в нужную категорию.
+    await classify.remember(db, tx.note, tx.kind, callback_data.arg)
+    callback_answer.text = f"{categories.get(callback_data.arg).label} · запомнил"
     await _show(cb, db, tx.id)
 
 
@@ -307,7 +335,7 @@ async def tx_flip(cb: CallbackQuery, callback_data: TxCb, db: Database, callback
         await _show(cb, db, callback_data.id)
         return
     new_kind = "expense" if tx.kind == "income" else "income"
-    category = categories.detect(tx.note, new_kind) or categories.default_for(new_kind)
+    category = await classify.resolve(db, tx.note, new_kind) or categories.default_for(new_kind)
     try:
         flipped = await db.flip_tx(tx.id, category)
     except TxBlocked as e:

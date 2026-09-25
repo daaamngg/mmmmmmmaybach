@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
 
+from .ai import AIConfig, AIConfigError, make_config
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -24,6 +26,8 @@ class Config:
     data_dir: Path
     timezone: tzinfo | None
     proxy: str | None = None
+    ai: AIConfig | None = None
+    telegram_api: str | None = None  # свой адрес Bot API (зеркало, если api.telegram.org заблокирован)
 
     @property
     def db_path(self) -> Path:
@@ -46,7 +50,8 @@ def load_config(env_file: Path | None = None) -> Config:
         raise ConfigError(
             "BOT_TOKEN не задан.\n"
             "1) Создай бота у @BotFather и скопируй токен.\n"
-            "2) Открой файл .env и вставь его в строку BOT_TOKEN=..."
+            "2) Открой файл .env и вставь его в строку BOT_TOKEN=...\n"
+            "   (на сервере — команда: finbot token)"
         )
 
     owner_raw = os.getenv("OWNER_ID", "").strip()
@@ -70,4 +75,19 @@ def load_config(env_file: Path | None = None) -> Config:
             raise ConfigError(f"Неизвестный часовой пояс TIMEZONE={tz_name}. Пример: Europe/Moscow") from e
 
     proxy = os.getenv("PROXY", "").strip() or None
-    return Config(bot_token=token, owner_id=owner_id, data_dir=data_dir, timezone=tz, proxy=proxy)
+    try:
+        ai = make_config(os.getenv("AI_API_KEY"), os.getenv("AI_BASE_URL"), os.getenv("AI_MODEL"))
+    except AIConfigError as e:
+        raise ConfigError(str(e)) from e
+    telegram_api = os.getenv("TELEGRAM_API_URL", "").strip().rstrip("/") or None
+    if telegram_api and not telegram_api.startswith(("http://", "https://")):
+        raise ConfigError("TELEGRAM_API_URL должен начинаться с http:// или https://")
+    return Config(
+        bot_token=token,
+        owner_id=owner_id,
+        data_dir=data_dir,
+        timezone=tz,
+        proxy=proxy,
+        ai=ai,
+        telegram_api=telegram_api,
+    )

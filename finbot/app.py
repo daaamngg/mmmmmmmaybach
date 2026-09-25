@@ -11,11 +11,13 @@ from logging.handlers import RotatingFileHandler
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import PRODUCTION, TelegramAPIServer
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommandScopeAllPrivateChats, ErrorEvent
 
 from . import clock, handlers, texts, ui
+from .ai import AICategorizer
 from .config import Config, ConfigError, load_config
 from .context import App
 from .db import Database
@@ -61,9 +63,10 @@ def build_dispatcher(app: App) -> Dispatcher:
 
 def make_bot(config: Config) -> Bot:
     session = None
-    if config.proxy:
+    if config.proxy or config.telegram_api:
+        api = TelegramAPIServer.from_base(config.telegram_api) if config.telegram_api else PRODUCTION
         try:
-            session = AiohttpSession(proxy=config.proxy)
+            session = AiohttpSession(api=api, proxy=config.proxy) if config.proxy else AiohttpSession(api=api)
         except ImportError as e:
             raise ConfigError("Для PROXY нужен пакет aiohttp-socks: pip install aiohttp-socks") from e
     return Bot(
@@ -81,6 +84,8 @@ async def main() -> None:
     db = Database(config.db_path)
     await db.open()
     app = App(config=config, db=db)
+    if config.ai is not None:
+        app.ai = AICategorizer(config.ai)
     bot = make_bot(config)
     dp = build_dispatcher(app)
     scheduler = Scheduler(bot, app)
@@ -92,6 +97,8 @@ async def main() -> None:
         log.info("Бот @%s запущен. Данные: %s", me.username, config.data_dir)
         if app.owner_id is None:
             log.warning("Владелец ещё не задан: открой @%s в Telegram и нажми /start", me.username)
+        if app.ai is not None:
+            log.info("Нейросеть для категорий: %s", app.ai.title)
         tasks.append(asyncio.create_task(scheduler.run()))
 
     async def on_shutdown() -> None:
@@ -99,6 +106,8 @@ async def main() -> None:
             task.cancel()
         with suppress(asyncio.TimeoutError):
             await asyncio.wait_for(ui.drain(), timeout=5)
+        if app.ai is not None:
+            await app.ai.close()
 
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)

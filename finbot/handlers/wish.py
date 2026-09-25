@@ -10,7 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.callback_answer import CallbackAnswer
 
-from .. import categories, clock, motivation
+from .. import classify, clock, motivation
 from ..callbacks import GoalCb, Nav, TxCb, WishCb
 from ..db import Database, Wish
 from ..fmt import duration, esc, pct
@@ -204,7 +204,7 @@ async def cb_buy(cb: CallbackQuery, callback_data: WishCb, db: Database, callbac
     current = await db.get_wish(callback_data.id)
     if current is None:
         return
-    category = categories.detect(current.title, "expense") or "shopping"
+    category = await classify.resolve(db, current.title, "expense") or "shopping"
     wish = await db.buy_wish(callback_data.id, category)
     if wish is None:
         await _already(cb, db, callback_data.id, callback_answer)

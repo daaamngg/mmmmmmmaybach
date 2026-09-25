@@ -11,6 +11,7 @@ from aiogram.utils.callback_answer import CallbackAnswer
 from .. import keyboards as k
 from .. import motivation, texts
 from ..callbacks import Nav
+from ..context import App
 from ..db import Database
 from ..ui import Event, render
 from . import calendar, common, entry, goals, history, settings, stats, wish
@@ -18,7 +19,7 @@ from . import calendar, common, entry, goals, history, settings, stats, wish
 router = Router(name="menu")
 
 
-async def open_section(section: str, event: Event, state: FSMContext, db: Database) -> bool:
+async def open_section(section: str, event: Event, state: FSMContext, db: Database, app: App) -> bool:
     """Открывает раздел по имени. False — если такого раздела нет."""
     if section == "balance":
         await common.show_dashboard(event, db)
@@ -31,7 +32,7 @@ async def open_section(section: str, event: Event, state: FSMContext, db: Databa
     elif section == "history":
         await history.show_history(event, db)
     elif section == "settings":
-        await settings.show_settings(event, db)
+        await settings.show_settings(event, db, app)
     elif section == "help":
         await common.show_help(event, db)
     elif section == "motivation":
@@ -90,16 +91,16 @@ BUTTON_SECTIONS = {
 
 
 @router.message(Command(*COMMAND_SECTIONS), StateFilter("*"))
-async def cmd_section(message: Message, state: FSMContext, db: Database) -> None:
+async def cmd_section(message: Message, state: FSMContext, db: Database, app: App) -> None:
     command = (message.text or "").split()[0].lstrip("/").split("@")[0].lower()
     await state.clear()
-    await open_section(COMMAND_SECTIONS[command], message, state, db)
+    await open_section(COMMAND_SECTIONS[command], message, state, db, app)
 
 
 @router.message(F.text.in_(BUTTON_SECTIONS), StateFilter("*"))
-async def menu_button(message: Message, state: FSMContext, db: Database) -> None:
+async def menu_button(message: Message, state: FSMContext, db: Database, app: App) -> None:
     await state.clear()
-    await open_section(BUTTON_SECTIONS[message.text or ""], message, state, db)
+    await open_section(BUTTON_SECTIONS[message.text or ""], message, state, db, app)
 
 
 @router.message(Command("cancel"), StateFilter("*"))
@@ -132,6 +133,6 @@ async def cb_no_spend(cb: CallbackQuery, db: Database) -> None:
 
 
 @router.callback_query(Nav.filter(), StateFilter("*"))
-async def cb_nav(cb: CallbackQuery, callback_data: Nav, state: FSMContext, db: Database) -> None:
+async def cb_nav(cb: CallbackQuery, callback_data: Nav, state: FSMContext, db: Database, app: App) -> None:
     await state.clear()
-    await open_section(callback_data.to, cb, state, db)
+    await open_section(callback_data.to, cb, state, db, app)

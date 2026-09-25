@@ -95,7 +95,19 @@ CREATE TABLE IF NOT EXISTS wishes (
 CREATE INDEX IF NOT EXISTS idx_wishes_status ON wishes(status, remind_at);
 """
 
-MIGRATIONS = [SCHEMA_V1]
+# v2: бот запоминает, какие категории ты выбираешь для своих слов.
+SCHEMA_V2 = """
+CREATE TABLE IF NOT EXISTS learned (
+    kind       TEXT    NOT NULL,                     -- income | expense
+    key        TEXT    NOT NULL,                     -- «=фраза целиком» или «~главное слово»
+    category   TEXT    NOT NULL,
+    source     TEXT    NOT NULL DEFAULT 'user',      -- user | ai
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (kind, key)
+);
+"""
+
+MIGRATIONS = [SCHEMA_V1, SCHEMA_V2]
 OPEN_WISH = ("pending", "thinking", "reminded")
 
 
@@ -1023,6 +1035,40 @@ class Database:
     def count_tx(self) -> int:
         return self.c.execute("SELECT COUNT(*) FROM tx").fetchone()[0]
 
+    @_db
+    def set_category_if(self, tx_id: int, expected: str, category: str) -> bool:
+        """Меняет категорию, только если она всё ещё expected (ты не успел выбрать сам)."""
+        with self._write() as c:
+            cur = c.execute("UPDATE tx SET category = ? WHERE id = ? AND category = ?", (category, tx_id, expected))
+            return cur.rowcount > 0
+
+    # ── выученные категории ──
+
+    @_db
+    def learn(self, kind: str, keys: list[str], category: str, source: str = "user") -> None:
+        """Запоминает категорию для слов. Выбор пользователя всегда главнее догадки нейросети."""
+        guard = "" if source == "user" else " WHERE learned.source != 'user'"
+        with self._write() as c:
+            c.executemany(
+                "INSERT INTO learned(kind, key, category, source, updated_at) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(kind, key) DO UPDATE SET category = excluded.category, "
+                "source = excluded.source, updated_at = excluded.updated_at" + guard,
+                [(kind, key, category, source, _now_ts()) for key in keys],
+            )
+
+    @_db
+    def recall(self, kind: str, keys: list[str]) -> str | None:
+        """Категория по первому выученному ключу (фраза целиком важнее отдельного слова)."""
+        for key in keys:
+            r = self.c.execute("SELECT category FROM learned WHERE kind = ? AND key = ?", (kind, key)).fetchone()
+            if r:
+                return str(r[0])
+        return None
+
+    @_db
+    def learned_count(self) -> int:
+        return self.c.execute("SELECT COUNT(*) FROM learned").fetchone()[0]
+
     # ── «Хочу купить» ──
 
     @staticmethod
@@ -1134,7 +1180,7 @@ class Database:
     def wipe(self) -> None:
         """Удаляет все данные, кроме привязки владельца."""
         with self._write() as c:
-            for table in ("moves", "tx", "goal_photos", "goals", "wishes"):
+            for table in ("moves", "tx", "goal_photos", "goals", "wishes", "learned"):
                 c.execute(f"DELETE FROM {table}")
             c.execute("DELETE FROM settings WHERE key != 'owner_id'")
         self.settings = Settings(owner_id=self.settings.owner_id)

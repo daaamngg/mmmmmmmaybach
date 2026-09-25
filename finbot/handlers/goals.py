@@ -71,8 +71,31 @@ class GoalMoney(StatesGroup):
 # ─────────────────────────── фото ───────────────────────────
 
 
-def photo_source(photo: Photo) -> PhotoSource:
-    return PhotoSource(photo.file_id, photo.file_unique_id, photo.local_path, row_id=photo.id)
+def data_dir(db: Database) -> Path:
+    """Папка данных — там же, где база (так работает и после переезда на другой компьютер)."""
+    return Path(db.path).parent
+
+
+def local_file(db: Database, stored: str | None) -> Path | None:
+    """Где лежит копия фото. В базе путь хранится относительно папки данных."""
+    if not stored:
+        return None
+    path = Path(stored)
+    if path.is_absolute() and path.exists():  # старая запись, сделанная на этом же компьютере
+        return path
+    # Относительный путь или абсолютный с другого компьютера (в т. ч. «C:\\…» с Windows):
+    # берём хвост начиная с папки photos.
+    parts = [p for p in stored.replace("\\", "/").split("/") if p]
+    if "photos" in parts:
+        parts = parts[len(parts) - 1 - parts[::-1].index("photos") :]
+    elif path.is_absolute() or ":" in parts[0]:
+        parts = ["photos", parts[-1]]
+    return data_dir(db).joinpath(*parts)
+
+
+def photo_source(db: Database, photo: Photo) -> PhotoSource:
+    local = local_file(db, photo.local_path)
+    return PhotoSource(photo.file_id, photo.file_unique_id, str(local) if local else None, row_id=photo.id)
 
 
 async def remember_refreshed(db: Database, src: PhotoSource | None) -> None:
@@ -86,7 +109,7 @@ async def save_local_copy(bot: Bot, db: Database, photos_dir: Path, photo_id: in
     dest = photos_dir / f"goal_{goal_id}" / f"{photo_id}.jpg"
     dest.parent.mkdir(parents=True, exist_ok=True)
     await bot.download(file_id, destination=dest)
-    await db.update_photo(photo_id, local_path=str(dest))
+    await db.update_photo(photo_id, local_path=dest.relative_to(data_dir(db)).as_posix())
 
 
 async def add_photos(bot: Bot, db: Database, app: App, goal_id: int, photos: list[tuple[str, str | None]]) -> int:
@@ -241,7 +264,7 @@ async def goal_card_view(
             [btn("📷 Фото", GoalCb(action="addph", id=gid)), btn("✏️ Изменить", GoalCb(action="edit", id=gid, idx=idx))],
             [btn("« Все цели", GoalCb(action="list"))],
         )
-    photo = photo_source(photos[idx]) if photos else None
+    photo = photo_source(db, photos[idx]) if photos else None
     return "\n".join(lines), markup, photo
 
 
@@ -262,7 +285,7 @@ async def cover(db: Database, goal: Goal) -> PhotoSource | None:
     if not goal.photos:
         return None
     photos = await db.photos(goal.id)
-    return photo_source(photos[0]) if photos else None
+    return photo_source(db, photos[0]) if photos else None
 
 
 async def celebrate(event: Event, db: Database, goal_ids: tuple[int, ...] | list[int]) -> None:
@@ -483,9 +506,10 @@ async def cb_photo_delete(
     except ValueError:
         return
     photo = await db.delete_photo(photo_id)
-    if photo is not None and photo.local_path:
+    local = local_file(db, photo.local_path) if photo is not None else None
+    if local is not None:
         with suppress(OSError):
-            Path(photo.local_path).unlink()
+            local.unlink()
     callback_answer.text = "Фото удалено"
     await show_goal(cb, db, callback_data.id)
 

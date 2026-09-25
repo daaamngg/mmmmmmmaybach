@@ -4,4 +4,4 @@ target-version = "py310"
 [lint]
 select = ["E", "F", "W", "B", "UP", "SIM", "RUF", "I"]
 # Русские тексты и эмодзи в строках — это нормально.
-ignore = ["E501", "RUF001", "RUF002", "RUF003", "RUF046", "SIM108", "UP036", "E402"]
+ignore = ["E501", "RUF001", "RUF002", "RUF003", "RUF046", "SIM108", "SIM905", "UP036", "E402"]

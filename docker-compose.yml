@@ -1,0 +1,14 @@
+# Запуск: docker compose up -d --build
+# Лог:    docker compose logs -f
+services:
+  finbot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - finbot-data:/data
+
+volumes:
+  finbot-data:

@@ -16,6 +16,7 @@ from .. import clock, motivation
 from ..callbacks import Nav, SetCb
 from ..context import App
 from ..db import Database
+from ..fmt import esc
 from ..keyboards import cancel_kb
 from ..money import money, parse_amount
 from ..parsing import parse_time
@@ -36,9 +37,11 @@ class SettingsFlow(StatesGroup):
     wipe = State()
 
 
-def settings_view(db: Database) -> tuple[str, InlineKeyboardMarkup]:
+async def settings_view(db: Database, app: App) -> tuple[str, InlineKeyboardMarkup]:
     s = db.settings
     harsh = "☠️ Без цензуры" if s.harsh >= 2 else "🔥 Жёстко"
+    learned = await db.learned_count()
+    ai = f"<b>{esc(app.ai.title)}</b>" if app.ai else "не подключена (см. README)"
     lines = [
         "⚙️ <b>НАСТРОЙКИ</b>",
         "",
@@ -47,6 +50,9 @@ def settings_view(db: Database) -> tuple[str, InlineKeyboardMarkup]:
         f"🔥 Жёсткость: <b>{harsh}</b>",
         f"🌅 Утренний пинок: <b>{s.morning_time if s.morning_on else 'выкл'}</b>",
         f"🌙 Вечерний отчёт: <b>{s.evening_time if s.evening_on else 'выкл'}</b>",
+        "",
+        f"🧠 Запомнил твоих слов для категорий: <b>{learned}</b>",
+        f"🤖 Нейросеть для категорий: {ai}",
     ]
     markup = kb(
         [btn("⚖️ Процент в цели", SetCb(action="pct")), btn("💱 Валюта", SetCb(action="cur"))],
@@ -67,19 +73,19 @@ def settings_view(db: Database) -> tuple[str, InlineKeyboardMarkup]:
     return "\n".join(lines), markup
 
 
-async def show_settings(event: Event, db: Database, note: str = "") -> None:
-    text, markup = settings_view(db)
+async def show_settings(event: Event, db: Database, app: App, note: str = "") -> None:
+    text, markup = await settings_view(db, app)
     await render(event, (note + "\n\n" if note else "") + text, markup)
 
 
-async def _show_new(message: Message, db: Database, note: str) -> None:
-    text, markup = settings_view(db)
+async def _show_new(message: Message, db: Database, app: App, note: str) -> None:
+    text, markup = await settings_view(db, app)
     await message.answer(f"{note}\n\n{text}", reply_markup=markup)
 
 
 @router.callback_query(SetCb.filter(F.action == "back"))
-async def cb_back(cb: CallbackQuery, db: Database) -> None:
-    await show_settings(cb, db)
+async def cb_back(cb: CallbackQuery, db: Database, app: App) -> None:
+    await show_settings(cb, db, app)
 
 
 # ── процент в цели ──
@@ -103,14 +109,16 @@ async def cb_pct(cb: CallbackQuery, db: Database) -> None:
 
 
 @router.callback_query(SetCb.filter(F.action == "pctset"))
-async def cb_pct_set(cb: CallbackQuery, callback_data: SetCb, db: Database, callback_answer: CallbackAnswer) -> None:
+async def cb_pct_set(
+    cb: CallbackQuery, callback_data: SetCb, db: Database, app: App, callback_answer: CallbackAnswer
+) -> None:
     try:
         value = int(callback_data.arg)
     except ValueError:
         return
     await db.update_settings(goal_pct=max(0, min(100, value)))
     callback_answer.text = f"Теперь {value}% в цели"
-    await show_settings(cb, db)
+    await show_settings(cb, db, app)
 
 
 @router.callback_query(SetCb.filter(F.action == "pctcustom"))
@@ -121,14 +129,14 @@ async def cb_pct_custom(cb: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(SettingsFlow.pct, F.text)
-async def pct_input(message: Message, state: FSMContext, db: Database) -> None:
+async def pct_input(message: Message, state: FSMContext, db: Database, app: App) -> None:
     raw = (message.text or "").strip().rstrip("%").strip()
     if not raw.isdigit() or not 0 <= int(raw) <= 100:
         await message.answer("Нужно целое число от 0 до 100.", reply_markup=cancel_kb())
         return
     await finish(message, state)
     await db.update_settings(goal_pct=int(raw))
-    await _show_new(message, db, f"✅ Теперь {raw}% с каждого дохода — в цели.")
+    await _show_new(message, db, app, f"✅ Теперь {raw}% с каждого дохода — в цели.")
 
 
 # ── валюта ──
@@ -146,33 +154,33 @@ async def cb_currency(cb: CallbackQuery, db: Database) -> None:
 
 
 @router.callback_query(SetCb.filter(F.action == "curset"))
-async def cb_currency_set(cb: CallbackQuery, callback_data: SetCb, db: Database) -> None:
+async def cb_currency_set(cb: CallbackQuery, callback_data: SetCb, db: Database, app: App) -> None:
     if callback_data.arg in CURRENCIES:
         await db.update_settings(currency=callback_data.arg)
-    await show_settings(cb, db)
+    await show_settings(cb, db, app)
 
 
 # ── жёсткость ──
 
 
 @router.callback_query(SetCb.filter(F.action == "harsh"))
-async def cb_harsh(cb: CallbackQuery, db: Database, callback_answer: CallbackAnswer) -> None:
+async def cb_harsh(cb: CallbackQuery, db: Database, app: App, callback_answer: CallbackAnswer) -> None:
     level = 1 if db.settings.harsh >= 2 else 2
     await db.update_settings(harsh=level)
     callback_answer.text = "☠️ Без цензуры. Ты сам попросил." if level == 2 else "🔥 Жёстко, но без мата"
-    await show_settings(cb, db, motivation.quote("general", level))
+    await show_settings(cb, db, app, motivation.quote("general", level))
 
 
 # ── напоминания ──
 
 
 @router.callback_query(SetCb.filter(F.action.in_({"mon", "eon"})))
-async def cb_toggle(cb: CallbackQuery, callback_data: SetCb, db: Database) -> None:
+async def cb_toggle(cb: CallbackQuery, callback_data: SetCb, db: Database, app: App) -> None:
     if callback_data.action == "mon":
         await db.update_settings(morning_on=not db.settings.morning_on)
     else:
         await db.update_settings(evening_on=not db.settings.evening_on)
-    await show_settings(cb, db)
+    await show_settings(cb, db, app)
 
 
 @router.callback_query(SetCb.filter(F.action.in_({"mtime", "etime"})))
@@ -186,7 +194,7 @@ async def cb_time(cb: CallbackQuery, callback_data: SetCb, state: FSMContext) ->
 
 @router.message(SettingsFlow.morning, F.text)
 @router.message(SettingsFlow.evening, F.text)
-async def time_input(message: Message, state: FSMContext, db: Database) -> None:
+async def time_input(message: Message, state: FSMContext, db: Database, app: App) -> None:
     value = parse_time(message.text or "")
     if value is None:
         await message.answer(
@@ -199,7 +207,9 @@ async def time_input(message: Message, state: FSMContext, db: Database) -> None:
         await db.update_settings(morning_time=value, morning_on=True)
     else:
         await db.update_settings(evening_time=value, evening_on=True)
-    await _show_new(message, db, f"✅ Буду присылать {'утренний пинок' if morning else 'вечерний отчёт'} в {value}.")
+    await _show_new(
+        message, db, app, f"✅ Буду присылать {'утренний пинок' if morning else 'вечерний отчёт'} в {value}."
+    )
 
 
 # ── остаток на расходы ──
