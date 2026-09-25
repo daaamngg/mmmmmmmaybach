@@ -137,6 +137,8 @@ else
         fi
     done
 fi
+# Без DATA_DIR бот писал бы в папку с кодом, а она у сервиса только для чтения.
+[ -n "$(get_env DATA_DIR)" ] || set_env DATA_DIR "$DATA_DIR"
 chmod 600 "$ENV_FILE"
 
 tz="$(grep -E '^TIMEZONE=' "$ENV_FILE" | cut -d= -f2- || true)"
