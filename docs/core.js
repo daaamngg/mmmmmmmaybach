@@ -737,10 +737,10 @@
     const choose = () => pool[Math.floor(rnd() * pool.length)];
     if (seed != null) return choose();
     const seen = recent.get(ctx) || [];
-    let choice = choose();
-    for (let i = 0; i < 8 && seen.includes(choice); i++) choice = choose();
+    const fresh = pool.filter((q) => !seen.includes(q)); // недавние фразы не повторяем
+    const choice = fresh.length ? fresh[Math.floor(rnd() * fresh.length)] : choose();
     seen.push(choice);
-    if (seen.length > 6) seen.shift();
+    if (seen.length > 40) seen.shift();
     recent.set(ctx, seen);
     return choice;
   }

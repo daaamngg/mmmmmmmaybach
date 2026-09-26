@@ -34,7 +34,7 @@ from .keys import APP, BOT
 log = logging.getLogger(__name__)
 routes = web.RouteTableDef()
 
-QUOTE_CONTEXTS = {"general", "morning", "want", "resisted", "income", "expense_impulse", "overspent"}
+QUOTE_CONTEXTS = {"general", "speech", "morning", "want", "resisted", "income", "expense_impulse", "overspent"}
 MAX_NOTE = 100
 MAX_TITLE = 60
 MAX_JSON = 64 * 1024
@@ -211,6 +211,7 @@ async def month(request: web.Request) -> web.Response:
         raise ApiError(400, "Некорректный месяц")
     first, last = month_bounds(y, m)
     days = await db.day_totals(first, last)
+    other = await db.other_days(first, last)
     summ = await db.summary(first, last)
     impulse = impulse_total(summ)
     no_spend = None
@@ -241,7 +242,8 @@ async def month(request: web.Request) -> web.Response:
             "first_weekday": first.weekday(),
             "days_in_month": last.day,
             "today": today.isoformat(),
-            "days": {d.isoformat(): [inc, exp] for d, (inc, exp) in days.items()},
+            # [доход, расход, сколько других изменений: пополнения целей, снятия, остаток]
+            "days": {d.isoformat(): [*days.get(d, (0, 0)), other.get(d, 0)] for d in sorted(set(days) | set(other))},
             "summary": {
                 "income": summ.income,
                 "expense": summ.expense,
@@ -266,7 +268,7 @@ async def day(request: web.Request) -> web.Response:
     except ValueError as e:
         raise ApiError(400, "Некорректная дата") from e
     today = clock.today()
-    txs = await db.day_txs(d)
+    txs = await db.day_txs(d, all_kinds=True)
     return web.json_response(
         {
             "date": d.isoformat(),

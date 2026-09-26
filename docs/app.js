@@ -674,12 +674,15 @@
       onclick: async () => {
         haptic('tap');
         try {
-          quoteText.textContent = (await api('/api/quote?ctx=general')).quote;
+          const ctx = Math.random() < 0.35 ? 'speech' : 'general';
+          quoteText.textContent = (await api('/api/quote?ctx=' + ctx)).quote;
         } catch (e) {
           /* цитата не критична */
         }
       },
     });
+    const uncensored =
+      canManage(st) && st.harsh < 2 && h('button.link.hint-link', { text: '☠️ С матом — включи в настройках', onclick: openSettings });
     const goal = st.goals.find((g) => g.id === st.main_goal);
     const manage = canManage(st);
     return h(
@@ -716,7 +719,7 @@
         streakNote(st.streak),
       ),
       goal ? mainGoalCard(goal) : noGoalsCard(),
-      h('section.card.quote', null, quoteText, moreQuote),
+      h('section.card.quote', null, quoteText, moreQuote, uncensored),
       st.ai && h('p.hint.foot', { text: '🤖 Нейросеть: ' + st.ai }),
       manage && h('p.hint.foot', { text: '☁️ Данные хранятся в облаке Telegram и видны только тебе.' }),
     );
@@ -1430,7 +1433,7 @@
     for (let i = 0; i < d.first_weekday; i++) cells.push(h('div.cell.blank'));
     for (let day = 1; day <= d.days_in_month; day++) {
       const iso = `${d.y}-${String(d.m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-      const [inc, out] = d.days[iso] || [0, 0];
+      const [inc, out, other] = d.days[iso] || [0, 0, 0];
       const future = iso > d.today;
       const cls = 'div.cell' + (iso === d.today ? '.today' : '') + (future ? '.future' : '');
       const heat = out > 0 && maxOut > 0 ? 0.1 + 0.45 * Math.sqrt(out / maxOut) : 0;
@@ -1438,6 +1441,7 @@
         h('span.d', { text: String(day) }),
         inc > 0 && h('span.in', { text: '+' + short(inc) }),
         out > 0 && h('span.out', { text: MINUS + short(out) }),
+        other > 0 && !inc && !out && h('span.dot', { text: '•', title: 'Переводы и изменения' }),
       ];
       cells.push(future ? h(cls, null, content) : clickable(cls, { css: { '--heat': heat.toFixed(3) }, onclick: () => openDay(iso) }, content));
     }
@@ -1492,12 +1496,20 @@
         if (token !== S.sheetSeq) return;
         let inc = 0;
         let out = 0;
+        let other = 0;
         for (const t of d.txs) {
           if (t.kind === 'income') inc += t.amount;
           else if (t.kind === 'expense') out += t.amount;
+          else other += 1;
         }
         const back = () => openDay(iso);
-        const totals = [inc && `Заработал ${money(inc)}`, out && `потратил ${money(out)}`].filter(Boolean).join(' · ');
+        const totals = [
+          inc && `Заработал ${money(inc)}`,
+          out && `потратил ${money(out)}`,
+          other && `переводов и изменений: ${other}`,
+        ]
+          .filter(Boolean)
+          .join(' · ');
         openSheet([
           h('h3', { text: d.title }),
           totals && h('p.hint', { text: totals.charAt(0).toUpperCase() + totals.slice(1) }),

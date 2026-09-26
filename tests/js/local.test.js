@@ -131,6 +131,15 @@ test('управление целью, настройки, остаток и «�
   const bought = await ok(app, 'POST', '/api/want/decide', { title: 'кроссовки', amount: '500', decision: 'buy' });
   assert.equal(bought.tx.category, 'clothes');
 
+  // В календаре видно любое изменение за день, а не только доходы и расходы.
+  const now = (await ok(app, 'GET', '/api/state')).today;
+  const [y, m] = now.split('-').map(Number);
+  const month = await ok(app, 'GET', `/api/month?y=${y}&m=${m}`);
+  assert.ok(month.days[now][2] >= 3, JSON.stringify(month.days[now])); // остаток, пополнение, снятие…
+  const day = await ok(app, 'GET', `/api/day?d=${now}`);
+  const kinds = new Set(day.txs.map((t) => t.kind));
+  for (const kind of ['adjust', 'transfer', 'income', 'expense']) assert.ok(kinds.has(kind), kind);
+
   const del = await ok(app, 'DELETE', `/api/goals/${goal.id}?dest=wallet`);
   assert.ok(del.amount > 0);
   assert.equal((await ok(app, 'GET', '/api/state')).goals.length, 0);

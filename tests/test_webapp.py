@@ -165,7 +165,7 @@ async def test_entries_goals_and_calendar(web: Web) -> None:
     assert state["main_goal"] == goal["id"] and state["goals"][0]["saved"] == 160_000
 
     month = await web.get("/api/month?y=2026&m=9")
-    assert month["days"]["2026-09-25"] == [200_000, 35_000] and month["days"]["2026-09-20"] == [0, 150_000]
+    assert month["days"]["2026-09-25"] == [200_000, 35_000, 0] and month["days"]["2026-09-20"] == [0, 150_000, 0]
     assert month["first_weekday"] == 1 and month["days_in_month"] == 30 and month["next"] is None
     assert {c["key"] for c in month["categories"]} == {"cafe", "home"}
     assert month["verdict"]
@@ -213,6 +213,15 @@ async def test_edit_and_delete_entries(web: Web) -> None:
     await web.post(f"/api/goals/{goal['id']}/deposit", {"amount": "800", "src": "pool"})
     status, body = await web.call("DELETE", f"/api/tx/{income['id']}")
     assert status == 409 and "уже ушли" in body["error"]
+
+
+async def test_day_shows_every_change(web: Web) -> None:
+    goal = (await web.post("/api/goals", {"title": "Часы", "target": "5000"}))["goal"]
+    await web.post(f"/api/goals/{goal['id']}/deposit", {"amount": "700", "src": "outside"})
+    month = await web.get("/api/month?y=2026&m=9")
+    assert month["days"]["2026-09-25"] == [0, 0, 1]  # ни дохода, ни расхода, но цель пополнена
+    day = await web.get("/api/day?d=2026-09-25")
+    assert [(t["kind"], t["amount"]) for t in day["txs"]] == [("adjust", 70_000)]
 
 
 async def test_deposit_and_celebration_in_chat(web: Web) -> None:

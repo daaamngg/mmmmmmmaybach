@@ -210,7 +210,7 @@ async def test_full_flow_in_browser(page: Page, site: tuple[str, App]) -> None:
     await page.shot("06-calendar")
     await p.click(".cell.today")
     await p.wait_for_selector(".sheet .item")
-    assert await p.locator(".sheet .item").count() == 3
+    assert await p.locator(".sheet .item").count() == 4  # доход, пополнение цели, два расхода
     await page.shot("07-day")
 
     # История: меняем категорию и удаляем запись.

@@ -14,6 +14,8 @@ import html
 import random
 from collections import defaultdict, deque
 
+from .motivation_extra import MORE_Q1, MORE_Q2
+
 _Q1: dict[str, list[str]] = {
     "general": [
         "Никто не придёт тебя спасать. Ни мама, ни государство, ни лотерея. Есть только ты и твоя дисциплина.",
@@ -288,9 +290,15 @@ _Q2: dict[str, list[str]] = {
     ],
 }
 
+# Ещё фраз и длинные речи («speech») — в motivation_extra.py.
+for _more, _base in ((MORE_Q1, _Q1), (MORE_Q2, _Q2)):
+    for _ctx, _lines in _more.items():
+        _pool = _base.setdefault(_ctx, [])
+        _pool.extend(line for line in _lines if line not in _pool)
+
 CONTEXTS = tuple(_Q1)
 _rng = random.Random()
-_recent: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=6))
+_recent: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=40))
 
 
 def pick(ctx: str, level: int = 1, seed: int | None = None) -> str:
@@ -305,11 +313,8 @@ def pick(ctx: str, level: int = 1, seed: int | None = None) -> str:
     if seed is not None:
         return rnd.choice(pool)
     recent = _recent[ctx]
-    choice = rnd.choice(pool)
-    for _ in range(8):  # не повторяем недавние фразы
-        if choice not in recent:
-            break
-        choice = rnd.choice(pool)
+    fresh = [q for q in pool if q not in recent]  # недавние фразы не повторяем
+    choice = rnd.choice(fresh or pool)
     recent.append(choice)
     return choice
 

@@ -985,12 +985,19 @@ class Database:
         return PeriodSummary(income, expense, saved, n_inc, n_exp, cats, goal_purchases, spend_days)
 
     @_db
-    def day_txs(self, day: date) -> list[Tx]:
-        return self._load_txs(
-            self.c,
-            "WHERE day = ? AND kind IN ('income', 'expense') ORDER BY created_at, id",
-            (day.isoformat(),),
+    def day_txs(self, day: date, all_kinds: bool = False) -> list[Tx]:
+        """Записи за день. all_kinds — ещё и переводы с корректировками (пополнения целей, остаток)."""
+        kinds = "" if all_kinds else " AND kind IN ('income', 'expense')"
+        return self._load_txs(self.c, f"WHERE day = ?{kinds} ORDER BY created_at, id", (day.isoformat(),))
+
+    @_db
+    def other_days(self, first: date, last: date) -> dict[date, int]:
+        """{день: сколько переводов и корректировок} — чтобы отметить такие дни в календаре."""
+        rows = self.c.execute(
+            "SELECT day, COUNT(*) AS n FROM tx WHERE day BETWEEN ? AND ? AND kind IN ('transfer', 'adjust') GROUP BY day",
+            (first.isoformat(), last.isoformat()),
         )
+        return {date.fromisoformat(r["day"]): r["n"] for r in rows}
 
     @_db
     def recent_txs(self, limit: int = 15) -> list[Tx]:

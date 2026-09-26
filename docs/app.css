@@ -152,6 +152,7 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .quote { background: linear-gradient(135deg, rgba(255, 106, 0, 0.16), rgba(255, 77, 61, 0.08)), var(--card); }
 .quote-text { font-weight: 700; font-size: 16px; line-height: 1.4; }
 .quote .link { display: inline-block; margin-top: 10px; }
+.quote .hint-link { display: block; color: var(--hint); font-weight: 500; font-size: 13px; }
 .streak { font-weight: 700; }
 
 /* ── календарь ── */
@@ -171,6 +172,7 @@ button { cursor: pointer; border: 0; background: none; padding: 0; }
 .cell .in, .cell .out { font-size: 10px; font-weight: 700; line-height: 1.2; }
 .cell .in { color: var(--inc); }
 .cell .out { color: var(--text); }
+.cell .dot { font-size: 14px; line-height: 1; color: var(--gold); }
 .cell.today { outline: 2px solid var(--fire); outline-offset: -2px; }
 .cell.future { opacity: 0.35; }
 .cell.blank { background: transparent; }

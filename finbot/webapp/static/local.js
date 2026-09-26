@@ -24,7 +24,7 @@
   const MONTHS = ['', 'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
   const MONTHS_GEN = ['', 'января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
   const WEEKDAYS = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
-  const QUOTE_CONTEXTS = new Set(['general', 'morning', 'want', 'resisted', 'income', 'expense_impulse', 'overspent']);
+  const QUOTE_CONTEXTS = new Set(['general', 'speech', 'morning', 'want', 'resisted', 'income', 'expense_impulse', 'overspent']);
 
   const encoder = typeof TextEncoder === 'function' ? new TextEncoder() : null;
   function bytes(s) {
@@ -470,8 +470,14 @@
         const total = C.daysBetween(start, end) + 1;
         if (total > 0) noSpend = { days: Math.max(0, total - summ.spend_days), of: total };
       }
+      // [доход, расход, сколько других изменений: пополнения целей, снятия, остаток]
       const days = {};
-      for (const [d, v] of C.dayTotals(state, first, last)) days[d] = v;
+      for (const [d, v] of C.dayTotals(state, first, last)) days[d] = [v[0], v[1], 0];
+      for (const t of state.txs) {
+        if ((t.kind === 'transfer' || t.kind === 'adjust') && t.day >= first && t.day <= last) {
+          (days[t.day] = days[t.day] || [0, 0, 0])[2] += 1;
+        }
+      }
       const [py, pm] = C.shiftMonth(y, m, -1);
       const [ny, nm] = C.shiftMonth(y, m, 1);
       const isPast = y * 12 + m < Number(now.slice(0, 4)) * 12 + Number(now.slice(5, 7));
@@ -508,9 +514,7 @@
       const d = query.d || '';
       if (!C.parseIso(d)) throw new ApiError(400, 'Некорректная дата');
       const now = C.today();
-      const txs = state.txs
-        .filter((t) => t.day === d && (t.kind === 'income' || t.kind === 'expense'))
-        .sort((a, b) => a.created_at - b.created_at || a.id - b.id);
+      const txs = state.txs.filter((t) => t.day === d).sort((a, b) => a.created_at - b.created_at || a.id - b.id);
       return { date: d, title: `${WEEKDAYS[weekday(d)]}, ${fmtDay(d, now)}`, future: d > now, txs: txs.map(txJson) };
     }
 

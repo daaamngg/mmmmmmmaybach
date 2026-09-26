@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import random
+
 from .. import motivation, reports, texts
 from ..callbacks import GoalCb, Nav
 from ..db import Database
@@ -23,7 +25,7 @@ async def show_help(event: Event, db: Database) -> None:
 
 async def show_motivation(event: Event, db: Database) -> None:
     line = await reports.personal_line(db)
-    quote = motivation.quote("general", db.settings.harsh)
+    quote = motivation.quote(random.choice(("general", "general", "speech")), db.settings.harsh)
     parts = ["🔥 <b>МОТИВАЦИЯ</b>", "", quote]
     if line:
         parts += ["", line]
