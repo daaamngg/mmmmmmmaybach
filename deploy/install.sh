@@ -219,7 +219,9 @@ if [ -n "$started" ]; then
     if [ -n "$(get_env WEBAPP_URL)" ]; then
         /usr/local/bin/finbot webapp wait || true
     fi
-    echo "   Открой бота в Telegram и отправь /start."
+    bot_name="$(journalctl -u "$SERVICE" --since "$since" -q --no-pager -o cat 2>/dev/null |
+        grep -oE 'Бот @[A-Za-z0-9_]+' | tail -n 1 | sed 's/.*@//' || true)"
+    echo "   Открой бота в Telegram${bot_name:+: https://t.me/$bot_name} — и отправь /start."
     echo
     echo "   Бот молчит? Выполни: finbot doctor — он найдёт причину."
     echo "   Управление: finbot status | logs | restart | update | token | owner | webapp | ai | backup"

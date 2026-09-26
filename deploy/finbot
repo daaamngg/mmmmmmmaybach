@@ -246,7 +246,7 @@ doctor() {
 
     echo
     if [ "$problems" -eq 0 ]; then
-        say "Всё в порядке. Открой бота в Telegram и отправь /start${owner:+ с аккаунта, у которого ID $owner}."
+        say "Всё в порядке. Открой бота${username:+ https://t.me/$username} и отправь /start${owner:+ с аккаунта, у которого ID $owner}."
     else
         warn "Проблем: $problems. Исправь по подсказкам выше и запусти finbot doctor ещё раз."
         return 1
